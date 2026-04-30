@@ -194,9 +194,37 @@ async def process_image(request: Request):
             except IOError:
                 font = ImageFont.load_default()
                 
-            avg_char_width = font_size * 0.55
-            chars_per_line = max(1, int((box_width * 0.95) / avg_char_width))
-            wrapped_text = textwrap.fill(translated_text, width=chars_per_line)
+            # Advanced Typography: Pixel-perfect word wrapping
+            words = translated_text.split()
+            lines = []
+            current_line = []
+            
+            # Constrain text to 85% of the box width for padding
+            max_pixel_width = box_width * 0.85
+            
+            for word in words:
+                test_line = ' '.join(current_line + [word])
+                # Check pixel width of the line using the actual font metrics!
+                try:
+                    pixel_width = font.getlength(test_line)
+                except AttributeError:
+                    # Fallback for very old Pillow versions
+                    pixel_width = font.getsize(test_line)[0]
+                    
+                if pixel_width <= max_pixel_width:
+                    current_line.append(word)
+                else:
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                        current_line = [word]
+                    else:
+                        # The word itself is longer than the bubble! Force it in.
+                        lines.append(word)
+                        current_line = []
+            if current_line:
+                lines.append(' '.join(current_line))
+                
+            wrapped_text = '\n'.join(lines)
             
             brightness = (bg_color[0] * 299 + bg_color[1] * 587 + bg_color[2] * 114) / 1000
             text_color = (255, 255, 255) if brightness < 128 else (0, 0, 0)
