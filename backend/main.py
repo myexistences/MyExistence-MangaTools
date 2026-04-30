@@ -25,10 +25,9 @@ app.add_middleware(
 try:
     import easyocr
     from PIL import Image, ImageDraw, ImageFont
-    logger.info("Initializing EasyOCR...")
-    # lang='ch_sim' is for simplified chinese, 'en' for english. 
-    # Add 'ch_tra' if you want traditional chinese
-    ocr = easyocr.Reader(['ch_sim', 'en']) 
+    logger.info("Initializing EasyOCR with Universal Language Support...")
+    # Supports Simplified/Traditional Chinese, Japanese, Korean, Spanish, and English!
+    ocr = easyocr.Reader(['ch_sim', 'ch_tra', 'ja', 'ko', 'es', 'en']) 
     logger.info("EasyOCR initialized successfully.")
     OCR_AVAILABLE = True
 except ImportError as e:
@@ -147,14 +146,15 @@ async def process_image(request: Request):
         # Create a mask for all detected text
         mask = np.zeros(img.shape[:2], dtype=np.uint8)
         for box in boxes_data:
-            x_min = max(0, int(box[0]) - 5)
-            y_min = max(0, int(box[1]) - 5)
-            x_max = min(img.shape[1], int(box[2]) + 5)
-            y_max = min(img.shape[0], int(box[3]) + 5)
+            # NO PADDING! We draw the exact bounding box to prevent touching the speech bubble borders.
+            x_min = max(0, int(box[0]))
+            y_min = max(0, int(box[1]))
+            x_max = min(img.shape[1], int(box[2]))
+            y_max = min(img.shape[0], int(box[3]))
             cv2.rectangle(mask, (x_min, y_min), (x_max, y_max), 255, -1)
             
-        # Magically erase the text while keeping bubble borders and gradients intact!
-        inpainted_img = cv2.inpaint(img, mask, 5, cv2.INPAINT_TELEA)
+        # Magically erase the text. Radius 2 prevents pulling in border colors.
+        inpainted_img = cv2.inpaint(img, mask, 2, cv2.INPAINT_TELEA)
         
         pil_img = Image.fromarray(cv2.cvtColor(inpainted_img, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_img)
@@ -210,10 +210,10 @@ async def process_image(request: Request):
                     lines.append(' '.join(current_line))
                 return '\n'.join(lines)
 
-            # We allow English text to be up to 30% wider/taller than the Chinese text box 
-            # because English letters take more physical space, but this still stays safe inside the bubble.
-            max_w = max(40, box_width * 1.3)
-            max_h = max(30, box_height * 1.3)
+            # STRICT BOUNDARY: The text must never be wider or taller than the original text!
+            # We enforce 95% of the original box size. The loop will shrink the text until it fits safely inside!
+            max_w = max(20, box_width * 0.95)
+            max_h = max(20, box_height * 0.95)
             
             font_size = 40 # Start with a huge font
             wrapped_text = translated_text
