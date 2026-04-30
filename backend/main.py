@@ -25,9 +25,10 @@ app.add_middleware(
 try:
     import easyocr
     from PIL import Image, ImageDraw, ImageFont
-    logger.info("Initializing EasyOCR with Universal Language Support...")
-    # Supports Simplified/Traditional Chinese, Japanese, Korean, Spanish, and English!
-    ocr = easyocr.Reader(['ch_sim', 'ch_tra', 'ja', 'ko', 'es', 'en']) 
+    logger.info("Initializing EasyOCR...")
+    # EasyOCR only supports ONE major Asian language at a time alongside English.
+    # We default to Chinese (Simplified). For Japanese manga, change this to ['ja', 'en'].
+    ocr = easyocr.Reader(['ch_sim', 'en']) 
     logger.info("EasyOCR initialized successfully.")
     OCR_AVAILABLE = True
 except ImportError as e:
