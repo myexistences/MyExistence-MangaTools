@@ -105,46 +105,88 @@ async def process_image(request: Request):
         font_path = r"e:\Workspace\Manhua OCR\assets\fonts\CC Wild Words Roman.ttf"
         import textwrap
         
-        translated_txts = []
+        # Group nearby bounding boxes to form full sentences!
+        boxes_data = []
         for res in result:
-            box = np.array(res[0]).astype(np.int32)
-            original_text = res[1]
+            bbox, text, _ = res
+            arr = np.array(bbox)
+            x_min, y_min = np.min(arr[:, 0]), np.min(arr[:, 1])
+            x_max, y_max = np.max(arr[:, 0]), np.max(arr[:, 1])
+            boxes_data.append([x_min, y_min, x_max, y_max, text])
             
+        # Sort by Y-coordinate first
+        boxes_data.sort(key=lambda x: x[1])
+        
+        merged_groups = []
+        for box in boxes_data:
+            if not merged_groups:
+                merged_groups.append(box)
+                continue
+                
+            last = merged_groups[-1]
+            
+            # Check if they are close vertically and overlap horizontally
+            # Manhua text is usually stacked vertically.
+            x_overlap = not (box[0] > last[2] + 40 or box[2] < last[0] - 40)
+            y_dist = box[1] - last[3]
+            
+            if x_overlap and y_dist < 50:
+                # Merge into the last group
+                last[0] = min(last[0], box[0])
+                last[1] = min(last[1], box[1])
+                last[2] = max(last[2], box[2])
+                last[3] = max(last[3], box[3])
+                # Manhua is often read top-to-bottom, no space needed in Chinese, but space for english
+                last[4] += " " + box[4]
+            else:
+                merged_groups.append(box)
+        
+        translated_txts = []
+        
+        # 1. SEAMLESS INPAINTING (Erase all text without breaking bubbles!)
+        # Create a mask for all detected text
+        mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        for box in boxes_data:
+            x_min = max(0, int(box[0]) - 5)
+            y_min = max(0, int(box[1]) - 5)
+            x_max = min(img.shape[1], int(box[2]) + 5)
+            y_max = min(img.shape[0], int(box[3]) + 5)
+            cv2.rectangle(mask, (x_min, y_min), (x_max, y_max), 255, -1)
+            
+        # Magically erase the text while keeping bubble borders and gradients intact!
+        inpainted_img = cv2.inpaint(img, mask, 5, cv2.INPAINT_TELEA)
+        
+        pil_img = Image.fromarray(cv2.cvtColor(inpainted_img, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_img)
+        
+        # 2. Translate and draw text
+        for group in merged_groups:
+            gx_min, gy_min, gx_max, gy_max, full_text = group
+            
+            if len(full_text) < 2 and full_text.isascii():
+                continue
+                
             try:
-                translated_text = translator.translate(original_text)
+                translated_text = translator.translate(full_text)
             except Exception as e:
-                logger.error(f"Translation failed for '{original_text}': {e}")
-                translated_text = original_text
+                logger.error(f"Translation failed for '{full_text}': {e}")
+                translated_text = full_text
                 
             translated_txts.append(translated_text)
             
-            # 1. Erase original text with matching background color
-            x_min = max(0, np.min(box[:, 0]) - 3)
-            y_min = max(0, np.min(box[:, 1]) - 3)
-            x_max = min(img.shape[1], np.max(box[:, 0]) + 3)
-            y_max = min(img.shape[0], np.max(box[:, 1]) + 3)
+            box_width = gx_max - gx_min
+            box_height = gy_max - gy_min
+            center_x, center_y = int((gx_min + gx_max)/2), int((gy_min + gy_max)/2)
             
-            # Sample background color from the very edge of the bounding box
-            # We take a pixel from the top-left edge
-            sample_y = max(0, y_min - 2)
-            sample_x = max(0, x_min - 2)
-            bg_color_bgr = img[sample_y, sample_x]
-            bg_color = (bg_color_bgr[2], bg_color_bgr[1], bg_color_bgr[0]) # Convert BGR to RGB
+            # Sample background color directly from the beautifully inpainted center!
+            sample_y = min(inpainted_img.shape[0]-1, max(0, center_y))
+            sample_x = min(inpainted_img.shape[1]-1, max(0, center_x))
+            bg_color_bgr = inpainted_img[sample_y, sample_x]
+            bg_color = (int(bg_color_bgr[2]), int(bg_color_bgr[1]), int(bg_color_bgr[0]))
             
-            # Draw the box using the sampled background color instead of pure white!
-            draw.rectangle([x_min, y_min, x_max, y_max], fill=bg_color)
-            
-            # 2. Draw translated text
-            box_width = x_max - x_min
-            box_height = y_max - y_min
-            
-            # Make font significantly larger
-            # Assume text will take roughly sqrt(width * height / len(text)) pixels per char
             area = box_width * box_height
             char_len = len(translated_text) if len(translated_text) > 0 else 1
-            estimated_font_size = int((area / char_len) ** 0.5) * 1.2
-            
-            # Clamp font size
+            estimated_font_size = int((area / char_len) ** 0.5) * 1.3
             font_size = max(16, min(int(estimated_font_size), int(box_height * 0.8)))
             
             try:
@@ -153,16 +195,14 @@ async def process_image(request: Request):
                 font = ImageFont.load_default()
                 
             avg_char_width = font_size * 0.55
-            chars_per_line = max(1, int((box_width) / avg_char_width))
-            
+            chars_per_line = max(1, int((box_width * 0.95) / avg_char_width))
             wrapped_text = textwrap.fill(translated_text, width=chars_per_line)
             
-            # Determine text color (black or white) based on background brightness
             brightness = (bg_color[0] * 299 + bg_color[1] * 587 + bg_color[2] * 114) / 1000
             text_color = (255, 255, 255) if brightness < 128 else (0, 0, 0)
             
             draw.multiline_text(
-                ((x_min + x_max)/2, (y_min + y_max)/2), 
+                (center_x, center_y), 
                 wrapped_text, 
                 font=font, 
                 fill=text_color, 
