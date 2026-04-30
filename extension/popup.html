@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manhua OCR Translator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Manhua OCR</h1>
+    
+    <label class="debug-toggle">
+      <input type="checkbox" id="debugMode" />
+      Debug Mode (Show Borders)
+    </label>
+
+    <div class="stats" id="statsDiv">
+      Panels found: 0
+    </div>
+
+    <!-- Gallery for detected panels -->
+    <div class="gallery" id="galleryDiv" style="display: none;">
+      <div class="image-viewer">
+        <img id="previewImage" src="" alt="Panel preview" />
+      </div>
+      <div class="gallery-controls">
+        <button id="prevBtn" class="nav-btn">&larr; Prev</button>
+        <span id="galleryCounter">1 / 1</span>
+        <button id="nextBtn" class="nav-btn">Next &rarr;</button>
+      </div>
+    </div>
+    
+    <div id="status" class="status">Active: Monitoring Page...</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
