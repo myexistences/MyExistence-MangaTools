@@ -184,48 +184,61 @@ async def process_image(request: Request):
             bg_color_bgr = inpainted_img[sample_y, sample_x]
             bg_color = (int(bg_color_bgr[2]), int(bg_color_bgr[1]), int(bg_color_bgr[0]))
             
-            area = box_width * box_height
-            char_len = len(translated_text) if len(translated_text) > 0 else 1
-            estimated_font_size = int((area / char_len) ** 0.5) * 1.3
-            font_size = max(16, min(int(estimated_font_size), int(box_height * 0.8)))
+            # --- THE PERFECT PLAN: ITERATIVE SHRINK-TO-FIT TYPOGRAPHY ---
             
-            try:
-                font = ImageFont.truetype(font_path, font_size)
-            except IOError:
-                font = ImageFont.load_default()
-                
-            # Advanced Typography: Pixel-perfect word wrapping
-            words = translated_text.split()
-            lines = []
-            current_line = []
-            
-            # Constrain text to 85% of the box width for padding
-            max_pixel_width = box_width * 0.85
-            
-            for word in words:
-                test_line = ' '.join(current_line + [word])
-                # Check pixel width of the line using the actual font metrics!
-                try:
-                    pixel_width = font.getlength(test_line)
-                except AttributeError:
-                    # Fallback for very old Pillow versions
-                    pixel_width = font.getsize(test_line)[0]
-                    
-                if pixel_width <= max_pixel_width:
-                    current_line.append(word)
-                else:
-                    if current_line:
-                        lines.append(' '.join(current_line))
-                        current_line = [word]
+            def wrap_pixel_perfect(text, fnt, max_width):
+                words = text.split()
+                lines = []
+                current_line = []
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    try:
+                        w = fnt.getlength(test_line)
+                    except AttributeError:
+                        w = fnt.getsize(test_line)[0]
+                        
+                    if w <= max_width:
+                        current_line.append(word)
                     else:
-                        # The word itself is longer than the bubble! Force it in.
-                        lines.append(word)
-                        current_line = []
-            if current_line:
-                lines.append(' '.join(current_line))
-                
-            wrapped_text = '\n'.join(lines)
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                            current_line = [word]
+                        else:
+                            lines.append(word)
+                            current_line = []
+                if current_line:
+                    lines.append(' '.join(current_line))
+                return '\n'.join(lines)
+
+            # We allow English text to be up to 30% wider/taller than the Chinese text box 
+            # because English letters take more physical space, but this still stays safe inside the bubble.
+            max_w = max(40, box_width * 1.3)
+            max_h = max(30, box_height * 1.3)
             
+            font_size = 40 # Start with a huge font
+            wrapped_text = translated_text
+            font = None
+            
+            # Iteratively shrink until it fits perfectly!
+            while font_size > 8:
+                try:
+                    font = ImageFont.truetype(font_path, font_size)
+                except IOError:
+                    font = ImageFont.load_default()
+                    break
+                    
+                wrapped_text = wrap_pixel_perfect(translated_text, font, max_w)
+                
+                # Measure exact height of the resulting paragraph
+                bbox = draw.multiline_textbbox((0,0), wrapped_text, font=font, align="center")
+                text_h = bbox[3] - bbox[1]
+                
+                if text_h <= max_h:
+                    break # Fits perfectly!
+                
+                font_size -= 2 # Too tall, shrink and try again
+                
+            # Determine text color (black or white) based on background brightness
             brightness = (bg_color[0] * 299 + bg_color[1] * 587 + bg_color[2] * 114) / 1000
             text_color = (255, 255, 255) if brightness < 128 else (0, 0, 0)
             

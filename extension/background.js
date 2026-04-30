@@ -1,7 +1,7 @@
 // background.js - Chrome extension service worker
 
 // URL of the local FastAPI server (adjust if needed)
-const SERVER_URL = "http://localhost:8000/process";
+const SERVER_URL = "http://127.0.0.1:8000/process";
 
 // Listen for messages from content script or popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

@@ -6,6 +6,7 @@ let debugModeEnabled = false;
 let isProcessing = false;
 const imageQueue = [];
 let observer = null;
+let intersectionObserver = null;
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -56,42 +57,53 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 function startObserving() {
-  if (observer) observer.disconnect();
+  if (observer) stopObserving();
   
-  observer = new MutationObserver((mutations) => {
+  // Intersection Observer: Only process images when they are near the viewport
+  // rootMargin '800px' means it will start processing when the image is 800 pixels below the screen.
+  intersectionObserver = new IntersectionObserver((entries, obs) => {
     let newImages = false;
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const img = entry.target;
+        queueImage(img);
+        obs.unobserve(img); // Only process it once
+        newImages = true;
+      }
+    });
+    if (newImages && !isProcessing && debugModeEnabled) {
+      processQueue();
+    }
+  }, { rootMargin: "800px" });
+
+  observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       if (mutation.addedNodes.length) {
         mutation.addedNodes.forEach(node => {
           if (node.tagName === 'IMG') {
-            queueImage(node);
-            newImages = true;
+            intersectionObserver.observe(node);
           } else if (node.querySelectorAll) {
-            const imgs = node.querySelectorAll('img');
-            imgs.forEach(img => queueImage(img));
-            if (imgs.length > 0) newImages = true;
+            node.querySelectorAll('img').forEach(img => intersectionObserver.observe(img));
           }
         });
       }
-    }
-    if (newImages && !isProcessing && debugModeEnabled) {
-      processQueue();
     }
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Queue existing images on page load immediately
-  document.querySelectorAll('img').forEach(img => queueImage(img));
-  if (!isProcessing && debugModeEnabled) {
-    processQueue();
-  }
+  // Observe existing images
+  document.querySelectorAll('img').forEach(img => intersectionObserver.observe(img));
 }
 
 function stopObserving() {
   if (observer) {
     observer.disconnect();
     observer = null;
+  }
+  if (typeof intersectionObserver !== 'undefined' && intersectionObserver) {
+    intersectionObserver.disconnect();
+    intersectionObserver = null;
   }
 }
 
